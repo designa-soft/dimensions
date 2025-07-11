@@ -70,7 +70,7 @@ var dimensions = {
       }
     });
 
-    this.worker = new Worker("dimensions.js");
+    this.worker = new Worker(chrome.runtime.getURL("dimensions.js"));
     this.worker.onmessage = this.receiveWorkerMessage.bind(this);
     this.worker.postMessage({ 
       type: 'init',
