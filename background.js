@@ -1,6 +1,28 @@
 var debug = false;
 var tabs = {};
 
+function createInlineWorker(url){
+  var worker = { onmessage: null };
+  var savedPostMessage = self.postMessage;
+  var savedOnMessage = self.onmessage;
+
+  self.postMessage = function(msg){
+    if(worker.onmessage) worker.onmessage({ data: msg });
+  };
+  self.onmessage = null;
+
+  importScripts(url);
+
+  var handler = self.onmessage;
+  self.postMessage = savedPostMessage;
+  self.onmessage = savedOnMessage;
+
+  worker.postMessage = function(msg){
+    handler({ data: msg });
+  };
+  return worker;
+}
+
 function toggle(tab){
   if(!tabs[tab.id])
     addTab(tab);
@@ -70,7 +92,7 @@ var dimensions = {
       }
     });
 
-    this.worker = new Worker(chrome.runtime.getURL("dimensions.js"));
+    this.worker = createInlineWorker(chrome.runtime.getURL("dimensions.js"));
     this.worker.onmessage = this.receiveWorkerMessage.bind(this);
     this.worker.postMessage({ 
       type: 'init',
