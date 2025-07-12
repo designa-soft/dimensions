@@ -1,6 +1,28 @@
 var debug = false;
 var tabs = {};
 
+function createInlineWorker(url){
+  var worker = { onmessage: null };
+  var savedPostMessage = self.postMessage;
+  var savedOnMessage = self.onmessage;
+
+  self.postMessage = function(msg){
+    if(worker.onmessage) worker.onmessage({ data: msg });
+  };
+  self.onmessage = null;
+
+  importScripts(url);
+
+  var handler = self.onmessage;
+  self.postMessage = savedPostMessage;
+  self.onmessage = savedOnMessage;
+
+  worker.postMessage = function(msg){
+    handler({ data: msg });
+  };
+  return worker;
+}
+
 function toggle(tab){
   if(!tabs[tab.id])
     addTab(tab);
@@ -26,7 +48,7 @@ function removeTab(id){
 
 var lastBrowserAction = null;
 
-chrome.browserAction.onClicked.addListener(function(tab){
+chrome.action.onClicked.addListener(function(tab){
   if(lastBrowserAction && Date.now() - lastBrowserAction < 10){
     // fix bug in Chrome Version 49.0.2623.87
     // that triggers browserAction.onClicked twice 
@@ -48,8 +70,8 @@ chrome.runtime.onSuspend.addListener(function() {
 });
 
 var dimensions = {
-  image: new Image(),
-  canvas: document.createElement('canvas'),
+  imageBitmap: null,
+  canvas: new OffscreenCanvas(1, 1),
   alive: true,
 
   activate: function(tab){
@@ -58,9 +80,9 @@ var dimensions = {
     this.onBrowserDisconnectClosure = this.onBrowserDisconnect.bind(this);
     this.receiveBrowserMessageClosure = this.receiveBrowserMessage.bind(this);
 
-    chrome.tabs.insertCSS(this.tab.id, { file: 'tooltip.css' });
-    chrome.tabs.executeScript(this.tab.id, { file: 'tooltip.chrome.js' });
-    chrome.browserAction.setIcon({ 
+    chrome.scripting.insertCSS({ target: { tabId: this.tab.id }, files: ['tooltip.css'] });
+    chrome.scripting.executeScript({ target: { tabId: this.tab.id }, files: ['tooltip.chrome.js'] });
+    chrome.action.setIcon({
       tabId: this.tab.id,
       path: {
         16: "images/icon16_active.png",
@@ -70,7 +92,7 @@ var dimensions = {
       }
     });
 
-    this.worker = new Worker("dimensions.js");
+    this.worker = createInlineWorker(chrome.runtime.getURL("dimensions.js"));
     this.worker.onmessage = this.receiveWorkerMessage.bind(this);
     this.worker.postMessage({ 
       type: 'init',
@@ -91,7 +113,7 @@ var dimensions = {
     this.port.onMessage.removeListener(this.receiveBrowserMessageClosure);
     this.port.onDisconnect.removeListener(this.onBrowserDisconnectClosure);
 
-    chrome.browserAction.setIcon({  
+    chrome.action.setIcon({
       tabId: this.tab.id,
       path: {
         16: "images/icon16.png",
@@ -101,7 +123,7 @@ var dimensions = {
       }
     });
 
-    window.removeTab(this.tab.id);
+    removeTab(this.tab.id);
   },
 
   onBrowserDisconnect: function(){
@@ -148,12 +170,14 @@ var dimensions = {
   },
 
   takeScreenshot: function(){
-    chrome.tabs.captureVisibleTab({ format: "png" }, this.parseScreenshot.bind(this));
+    chrome.tabs.captureVisibleTab({ format: "png" }).then(this.parseScreenshot.bind(this));
   },
 
-  parseScreenshot: function(dataUrl){
-    this.image.onload = this.loadImage.bind(this);
-    this.image.src = dataUrl;
+  parseScreenshot: async function(dataUrl){
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    this.imageBitmap = await createImageBitmap(blob);
+    this.loadImage();
   },
 
   //
@@ -169,9 +193,9 @@ var dimensions = {
     // adjust the canvas size to the image size
     this.canvas.width = this.tab.width;
     this.canvas.height = this.tab.height;
-    
+
     // draw the image to the canvas
-    this.ctx.drawImage(this.image, 0, 0, this.canvas.width, this.canvas.height);
+    this.ctx.drawImage(this.imageBitmap, 0, 0, this.canvas.width, this.canvas.height);
     
     // read out the image data from the canvas
     var imgData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height).data;
